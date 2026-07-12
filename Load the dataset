@@ -1,0 +1,274 @@
+"""
+Capstone Part 1 -- Data Acquisition, Cleaning, and Exploratory Analysis
+Dataset: Employee Performance (synthetic, generated for this project)
+"""
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+sns.set_style("whitegrid")
+log = []
+
+def section(title):
+    line = f"\n{'='*70}\n{title}\n{'='*70}"
+    print(line)
+    log.append(line)
+
+def out(x=""):
+    print(x)
+    log.append(str(x))
+
+# ----------------------------------------------------------------------
+# TASK 1: Load dataset
+# ----------------------------------------------------------------------
+section("TASK 1: Load Dataset")
+df = pd.read_csv("/home/claude/raw_employee_data.csv")
+
+out("First 5 rows:")
+out(df.head())
+out("\nColumn dtypes:")
+out(df.dtypes)
+out(f"\nDataFrame shape: {df.shape}")
+
+# ----------------------------------------------------------------------
+# TASK 2: Null value analysis
+# ----------------------------------------------------------------------
+section("TASK 2: Null Value Analysis")
+null_counts = df.isnull().sum()
+null_pct = (df.isnull().sum() / df.shape[0]) * 100
+null_report = pd.DataFrame({"null_count": null_counts, "null_pct": null_pct.round(2)})
+out(null_report)
+
+high_null_cols = null_pct[null_pct > 20].index.tolist()
+out(f"\nColumns exceeding 20% null rate: {high_null_cols}")
+
+numeric_cols_for_fill = df.select_dtypes(include=[np.number]).columns.tolist()
+for col in numeric_cols_for_fill:
+    if col in null_report.index and null_report.loc[col, "null_pct"] < 20 and df[col].isnull().sum() > 0:
+        median_val = df[col].median()
+        df[col] = df[col].fillna(median_val)
+        out(f"Filled '{col}' nulls with median = {median_val:.2f}")
+
+out("\nNulls remaining after median fill (numeric <20% cols):")
+out(df.isnull().sum())
+
+# ----------------------------------------------------------------------
+# TASK 3: Duplicate detection and removal
+# ----------------------------------------------------------------------
+section("TASK 3: Duplicate Detection and Removal")
+dup_count = df.duplicated().sum()
+out(f"Number of duplicate rows: {dup_count}")
+
+null_pct_before_dedup = (df.isnull().sum() / df.shape[0]) * 100
+df = df.drop_duplicates()
+rows_removed = dup_count
+out(f"Rows removed: {rows_removed}")
+out(f"New shape: {df.shape}")
+
+null_pct_after_dedup = (df.isnull().sum() / df.shape[0]) * 100
+null_change = (null_pct_after_dedup - null_pct_before_dedup).round(3)
+out("\nChange in null % after dedup (per column):")
+out(null_change)
+
+# ----------------------------------------------------------------------
+# TASK 4: Data type correction
+# ----------------------------------------------------------------------
+section("TASK 4: Data Type Correction")
+mem_before = df.memory_usage(deep=True).sum()
+out(f"Memory usage BEFORE conversion: {mem_before} bytes ({mem_before/1024:.2f} KB)")
+
+out(f"\n'TrainingHours' dtype before fix: {df['TrainingHours'].dtype}")
+out(f"Sample raw values: {df['TrainingHours'].sample(5, random_state=1).tolist()}")
+
+df["TrainingHours"] = df["TrainingHours"].astype(str).str.replace("hrs", "", regex=False).str.strip()
+df["TrainingHours"] = pd.to_numeric(df["TrainingHours"], errors="coerce")
+out(f"'TrainingHours' dtype after fix: {df['TrainingHours'].dtype}")
+out(f"Nulls introduced by coercion (previously 'NA' strings): {df['TrainingHours'].isnull().sum()}")
+
+th_median = df["TrainingHours"].median()
+df["TrainingHours"] = df["TrainingHours"].fillna(th_median)
+out(f"Filled TrainingHours nulls with median = {th_median:.2f}")
+
+df["Department"] = df["Department"].astype("category")
+out(f"\n'Department' dtype after conversion: {df['Department'].dtype}")
+
+mem_after = df.memory_usage(deep=True).sum()
+out(f"\nMemory usage AFTER conversion: {mem_after} bytes ({mem_after/1024:.2f} KB)")
+out(f"Memory saved: {mem_before - mem_after} bytes ({(1 - mem_after/mem_before)*100:.1f}% reduction)")
+
+# ----------------------------------------------------------------------
+# TASK 5: Descriptive statistics and skewness
+# ----------------------------------------------------------------------
+section("TASK 5: Descriptive Statistics and Skewness")
+numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+out(df[numeric_cols].describe())
+
+skew_vals = df[numeric_cols].skew().sort_values(key=lambda s: s.abs(), ascending=False)
+out("\nSkewness per numeric column (sorted by |skew|):")
+out(skew_vals)
+
+top_skew_col = skew_vals.index[0]
+out(f"\nMost skewed column: '{top_skew_col}' (skew = {skew_vals.iloc[0]:.3f})")
+
+# ----------------------------------------------------------------------
+# TASK 6: Outlier detection with IQR
+# ----------------------------------------------------------------------
+section("TASK 6: Outlier Detection (IQR method)")
+outlier_summary = {}
+for col in ["MonthlySalary", "TrainingHours"]:
+    Q1 = df[col].quantile(0.25)
+    Q3 = df[col].quantile(0.75)
+    IQR = Q3 - Q1
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQR
+    n_outliers = ((df[col] < lower) | (df[col] > upper)).sum()
+    outlier_summary[col] = {"Q1": Q1, "Q3": Q3, "IQR": IQR, "lower": lower, "upper": upper, "n_outliers": n_outliers}
+    out(f"\n{col}: Q1={Q1:.2f}, Q3={Q3:.2f}, IQR={IQR:.2f}, bounds=({lower:.2f}, {upper:.2f}), outliers={n_outliers}")
+
+# ----------------------------------------------------------------------
+# TASK 7: Visualizations
+# ----------------------------------------------------------------------
+section("TASK 7: Visualizations")
+
+# 7a. Line plot
+plt.figure(figsize=(10, 5))
+plt.plot(df.index, df["MonthlySalary"].sort_values().values, color="#2563eb")
+plt.title("Monthly Salary Sorted (Line Plot)")
+plt.xlabel("Row Index (sorted)")
+plt.ylabel("Monthly Salary")
+plt.tight_layout()
+plt.savefig("/home/claude/plots/01_line_plot.png", dpi=110)
+plt.close()
+out("Saved 01_line_plot.png")
+
+# 7b. Bar chart - mean salary by department
+plt.figure(figsize=(9, 5))
+dept_means = df.groupby("Department", observed=True)["MonthlySalary"].mean().sort_values(ascending=False)
+dept_means.plot.bar(color="#16a34a")
+plt.title("Average Monthly Salary by Department")
+plt.xlabel("Department")
+plt.ylabel("Mean Monthly Salary")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.savefig("/home/claude/plots/02_bar_chart.png", dpi=110)
+plt.close()
+out("Saved 02_bar_chart.png")
+
+# 7c. Histogram of most skewed column
+plt.figure(figsize=(9, 5))
+sns.histplot(df[top_skew_col], bins=20, kde=True, color="#dc2626")
+plt.title(f"Distribution of {top_skew_col} (Most Skewed, skew={skew_vals.iloc[0]:.2f})")
+plt.tight_layout()
+plt.savefig("/home/claude/plots/03_histogram.png", dpi=110)
+plt.close()
+out("Saved 03_histogram.png")
+
+# 7d. Scatter plot
+plt.figure(figsize=(9, 5))
+sns.scatterplot(data=df, x="YearsExperience", y="MonthlySalary", alpha=0.5, color="#7c3aed")
+plt.title("Years of Experience vs Monthly Salary")
+plt.tight_layout()
+plt.savefig("/home/claude/plots/04_scatter.png", dpi=110)
+plt.close()
+out("Saved 04_scatter.png")
+
+# 7e. Box plot
+plt.figure(figsize=(9, 5))
+sns.boxplot(data=df, x="Department", y="PerformanceScore", palette="Set2")
+plt.title("Performance Score by Department")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.savefig("/home/claude/plots/05_boxplot.png", dpi=110)
+plt.close()
+out("Saved 05_boxplot.png")
+
+# 7f. Correlation heatmap
+plt.figure(figsize=(8, 6))
+corr_matrix = df[numeric_cols].corr()
+sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0)
+plt.title("Correlation Heatmap (Numeric Columns)")
+plt.tight_layout()
+plt.savefig("/home/claude/plots/06_heatmap.png", dpi=110)
+plt.close()
+out("Saved 06_heatmap.png")
+
+# find highest abs correlation pair (excluding diagonal)
+corr_unstacked = corr_matrix.abs().unstack()
+corr_unstacked = corr_unstacked[corr_unstacked < 1.0]
+top_pair = corr_unstacked.idxmax()
+top_corr_val = corr_matrix.loc[top_pair[0], top_pair[1]]
+out(f"\nHighest |correlation| pair: {top_pair} = {top_corr_val:.3f}")
+
+# ----------------------------------------------------------------------
+# TASK 8a: Imputation strategy comparison
+# ----------------------------------------------------------------------
+section("TASK 8a: Imputation Strategy Comparison (Mean vs Median)")
+top2_skew_cols = skew_vals.index[:2].tolist()
+for col in top2_skew_cols:
+    mean_val = df[col].mean()
+    median_val = df[col].median()
+    out(f"{col}: mean = {mean_val:.2f}, median = {median_val:.2f}, skew = {df[col].skew():.3f}")
+    # (already filled earlier for Task 2/4, but demonstrate final null check)
+    remaining_nulls = df[col].isnull().sum()
+    out(f"  Remaining nulls in {col}: {remaining_nulls}")
+
+# ----------------------------------------------------------------------
+# TASK 8b: Spearman vs Pearson
+# ----------------------------------------------------------------------
+section("TASK 8b: Spearman Rank Correlation vs Pearson")
+pearson_matrix = df[numeric_cols].corr(method="pearson")
+spearman_matrix = df[numeric_cols].corr(method="spearman")
+
+out("Pearson correlation matrix:")
+out(pearson_matrix.round(3))
+out("\nSpearman correlation matrix:")
+out(spearman_matrix.round(3))
+
+diff_matrix = (spearman_matrix - pearson_matrix).abs()
+diff_unstacked = diff_matrix.unstack()
+diff_unstacked = diff_unstacked[diff_unstacked.index.get_level_values(0) != diff_unstacked.index.get_level_values(1)]
+diff_unstacked = diff_unstacked.sort_values(ascending=False)
+# dedupe symmetric pairs
+seen = set()
+top3_pairs = []
+for (a, b), val in diff_unstacked.items():
+    key = frozenset([a, b])
+    if key not in seen:
+        seen.add(key)
+        top3_pairs.append((a, b, val))
+    if len(top3_pairs) == 3:
+        break
+
+out("\nTop 3 pairs by |Spearman - Pearson|:")
+diff_table = pd.DataFrame(top3_pairs, columns=["col_a", "col_b", "abs_diff"])
+out(diff_table)
+
+# ----------------------------------------------------------------------
+# TASK 8c: Grouped aggregation
+# ----------------------------------------------------------------------
+section("TASK 8c: Grouped Aggregation")
+group_agg = df.groupby("Department", observed=True)["MonthlySalary"].agg(["mean", "std", "count"])
+out(group_agg)
+
+highest_mean_dept = group_agg["mean"].idxmax()
+highest_std_dept = group_agg["std"].idxmax()
+mean_ratio = group_agg["mean"].max() / group_agg["mean"].min()
+out(f"\nGroup with highest mean salary: {highest_mean_dept}")
+out(f"Group with highest std dev: {highest_std_dept}")
+out(f"Ratio of highest to lowest group mean: {mean_ratio:.3f}")
+
+# ----------------------------------------------------------------------
+# TASK 9: Save cleaned dataset
+# ----------------------------------------------------------------------
+section("TASK 9: Save Cleaned Dataset")
+df.to_csv("/home/claude/cleaned_data.csv", index=False)
+out(f"Saved cleaned_data.csv with final shape: {df.shape}")
+
+# Save full log
+with open("/home/claude/analysis_log.txt", "w") as f:
+    f.write("\n".join(log))
+
+print("\n\nDONE. Full log saved to analysis_log.txt")
